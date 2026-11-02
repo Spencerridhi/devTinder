@@ -129,7 +129,7 @@ app.post("/connectionRequest/send/:status/:toUserID", userAuth, async(req,res) =
     try{
         const fromUserID = req.user._id;
         const {status, toUserID} = req.params;
-        const validStatuses = ["ignored", "accepted"];
+        const validStatuses = ["ignored", "interested"];
         const toUser = await User.findById(toUserID);
                 console.log(toUser, 'toUser');
         if(!validStatuses.includes(status)){
@@ -169,31 +169,111 @@ app.post("/connectionRequest/send/:status/:toUserID", userAuth, async(req,res) =
         res.status(400).send(err.message);
     }
 });
-//FEED API ------> GET ALL USERS
-app.get("/feed", async(req,res) => {
+app.post("/connectionRequest/review/:status/:reqID", userAuth, async(req,res) => {
     try{
-        const users = await User.find({});
-        res.send(users + 'FOUND');
-    }catch(err) {
-        res.status(404).send("Not found");
+        const {status, reqID} = req.params;
+        const validStatuses = ["accepted", "rejected"];
+        const loggedUser = req.user;
+        if(!validStatuses.includes(status)){
+            return res.status(400).send("Invalid status");
+        }
+        const connectionRequest = await ConnectionRequest.findById({
+            _id: reqID,
+            toUserID: loggedUser._id,
+            status: "interested"
+        });
+        console.log(connectionRequest, 'connectionRequest111111111');
+        if(!connectionRequest){
+            return res.status(404).send("Connection Request not found");
+        }
+        connectionRequest.status = status;
+        await connectionRequest.save();
+        res.send("Connection Request " + status + " from " + connectionRequest.fromUserID);
+    }catch(err){
+        res.status(400).send(err.message);
+    }
+});
+//FEED API ------> GET ALL USERS
+app.get("/feed", userAuth, async(req,res) => {
+    try{
+        const loggedUser = req.user;
+        const connectionRequests = await ConnectionRequest.find({
+            $or: [
+                { toUserID: loggedUser._id},
+                { fromUserID: loggedUser._id}
+            ],
+        });
+        const hideRequestsFromFeed = new Set();
+        connectionRequests.map((request) => {
+            hideRequestsFromFeed.add(request.toUserID.toString());
+            hideRequestsFromFeed.add(request.fromUserID.toString());
+        });
+        const feedUsers = await User.find({
+            _id:{ $nin: Array.from(hideRequestsFromFeed) }
+        }).select("fname lname gender age");
+        res.send(feedUsers);
+    }
+    catch(err){
+        res.status(400).send(err.message);
     }
 });
 
-app.get("/user" , async(req,res) => {
-    const UserEmail = req.body.email;
-    console.log(UserEmail);
+/// profiles received connection requests
+app.get("/user/request/received", userAuth, async(req,res) => {
+    const loggedUser = req.user;
     try{
-        const user = await User.findOne({email: UserEmail});
-        console.log(user);
-        if(!user){
-            throw new Error("User not found");
-        }else{
-            res.send(user);
-        }
-    }catch(err) {
-        res.status(404).send(err.message);
+        const connectionRequests = await ConnectionRequest.find({
+            toUserID: loggedUser._id, status: "interested"
+        }).populate("fromUserID", ["fname", "lname"]);
+        res.send(connectionRequests);
+    }catch(err){
+        res.status(400).send(err.message);
     }
 });
+app.get("/user/connections", userAuth, async(req,res) => {
+    const loggedUser = req.user;
+    try{
+        const connections = await ConnectionRequest.find({
+            $or: [
+                { toUserID: loggedUser._id, status: "accepted" },
+                { fromUserID: loggedUser._id, status: "accepted" }
+            ]
+        }).populate("fromUserID", ["fname", "lname"]).populate("toUserID", ["fname", "lname"]);
+        const data = connections.map((user) => {
+            if(user.toUserID._id.toString() === loggedUser._id.toString()){
+                return {
+                    _id: user.fromUserID._id,
+                    fname: user.fromUserID.fname,
+                    lname: user.fromUserID.lname
+                }
+            }
+            return {
+                _id: user.toUserID._id,
+                fname: user.toUserID.fname,
+                lname: user.toUserID.lname
+            }
+        });
+        res.json({message: loggedUser.fname + 's connections: ' ,
+            data: data});
+    }catch(err){
+        res.status(400).send(err.message);
+    }
+});
+// app.get("/user" , async(req,res) => {
+//     const UserEmail = req.body.email;
+//     console.log(UserEmail);
+//     try{
+//         const user = await User.findOne({email: UserEmail});
+//         console.log(user);
+//         if(!user){
+//             throw new Error("User not found");
+//         }else{
+//             res.send(user);
+//         }
+//     }catch(err) {
+//         res.status(404).send(err.message);
+//     }
+// });
 // // app.use("/", (req,res) => {
 // //  res.send("hello from server");
 // // });
